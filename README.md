@@ -1,11 +1,11 @@
 # Ridge Detector
 
 <a href="Example_Stencil.png">
-  <img src="Example_Stencil.png" alt="Example Stencil" width="250">
+  <img src="Example_Stencil.png" alt="Example Stencil" width="130">
 </a>
 ⇒
 <a href="Example_Ridges.png">
-  <img src="Example_Ridges.png" alt="Example Ridges" width="250">
+  <img src="Example_Ridges.png" alt="Example Ridges" width="130">
 </a>
 
 Detect central inner ridges (medial structures) of arbitrary 2D shapes.
