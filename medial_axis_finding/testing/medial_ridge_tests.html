@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Medial Ridge Tests</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      margin: 24px;
+      color: #202124;
+      background: #f8faf9;
+    }
+
+    h1 {
+      font-size: 22px;
+      margin-bottom: 16px;
+    }
+
+    .summary {
+      margin-bottom: 16px;
+      font-weight: 600;
+    }
+
+    .test_pass {
+      color: #176b37;
+    }
+
+    .test_fail {
+      color: #9b1c1c;
+    }
+
+    pre {
+      padding: 12px;
+      border: 1px solid #d7ded9;
+      background: #ffffff;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <h1>Medial Ridge Tests</h1>
+  <div id="summary" class="summary"></div>
+  <pre id="test_output"></pre>
+
+  <script src="medial_ridge.js"></script>
+  <script>
+    (function run_medial_ridge_tests() {
+      'use strict';
+
+      const ridge = window.medial_ridge;
+      const test_output_lines = [];
+      let passed_count = 0;
+      let failed_count = 0;
+
+      function record_pass(test_name) {
+        passed_count++;
+        test_output_lines.push('PASS ' + test_name);
+      }
+
+      function record_fail(test_name, error) {
+        failed_count++;
+        test_output_lines.push('FAIL ' + test_name + ': ' + error.message);
+      }
+
+      function test(test_name, test_function) {
+        try {
+          test_function();
+          record_pass(test_name);
+        } catch (error) {
+          record_fail(test_name, error);
+        }
+      }
+
+      function assert_equal(actual_value, expected_value, message) {
+        if (actual_value !== expected_value) {
+          throw new Error(message + ' expected ' + expected_value + ' received ' + actual_value);
+        }
+      }
+
+      function assert_true(condition, message) {
+        if (!condition) throw new Error(message);
+      }
+
+      function count_nonzero(array_value) {
+        let nonzero_count = 0;
+        for (let item_index = 0; item_index < array_value.length; item_index++) {
+          if (array_value[item_index]) nonzero_count++;
+        }
+        return nonzero_count;
+      }
+
+      test('normalizes nonzero stencil values', function test_normalization() {
+        const foreground = ridge.build_binary_foreground(new Uint8Array([0, 1, 255, 4]), 2, 2);
+        assert_equal(foreground[0], 0, 'zero pixel');
+        assert_equal(foreground[1], 1, 'one pixel');
+        assert_equal(foreground[2], 1, '255 pixel');
+        assert_equal(foreground[3], 1, 'nonzero pixel');
+      });
+
+      test('keep lut source-contract entries', function test_keep_lut() {
+        const keep_lut = ridge.build_keep_lut();
+        assert_equal(keep_lut[0], 0, 'empty pattern');
+        assert_equal(keep_lut[16], 1, 'isolated center');
+        assert_equal(keep_lut[17], 1, 'center plus one neighbor');
+        assert_equal(keep_lut[511], 0, 'full neighborhood');
+        assert_equal(keep_lut[341], 1, 'center bridges four diagonal corners');
+      });
+
+      test('component counter uses 8-connectivity', function test_component_counter() {
+        assert_equal(ridge.count_pattern_components(1 | 16), 1, 'diagonal through center connects');
+        assert_equal(ridge.count_pattern_components(1 | 256), 2, 'opposite corners without bridge separate');
+      });
+
+      test('cornerness source-contract values', function test_cornerness() {
+        const isolated = new Uint8Array([
+          0, 0, 0,
+          0, 1, 0,
+          0, 0, 0
+        ]);
+        const isolated_cornerness = ridge.compute_cornerness(isolated, 3, 3);
+        assert_equal(isolated_cornerness[4], 8, 'isolated center cornerness');
+
+        const full = new Uint8Array(9).fill(1);
+        const full_cornerness = ridge.compute_cornerness(full, 3, 3);
+        assert_equal(full_cornerness[4], 0, 'full center cornerness');
+      });
+
+      test('zero-padded EDT handles all-foreground stencils', function test_all_foreground_distance() {
+        const foreground = new Uint8Array(9).fill(1);
+        const distance_squared = ridge.compute_project_distance_squared(foreground, 3, 3);
+        assert_equal(distance_squared[0], 1, 'corner distance squared');
+        assert_equal(distance_squared[4], 4, 'center distance squared');
+      });
+
+      test('processing order respects source key priority', function test_processing_order() {
+        const foreground = new Uint8Array([1, 1, 1]);
+        const distance_squared = new Float64Array([2, 1, 1]);
+        const cornerness = new Uint8Array([0, 1, 0]);
+        const order = ridge.build_processing_order(foreground, distance_squared, cornerness, 0);
+        assert_equal(order[0], 2, 'lower cornerness wins distance tie');
+        assert_equal(order[2], 0, 'larger distance is last');
+      });
+
+      test('isolated foreground pixel survives as ridge', function test_isolated_pixel() {
+        const stencil = new Uint8Array([
+          0, 0, 0,
+          0, 1, 0,
+          0, 0, 0
+        ]);
+        const ridge_mask = ridge.compute_ridge_mask(stencil, 3, 3, { seed: 0 });
+        assert_equal(ridge_mask[4], 255, 'center ridge');
+        assert_equal(count_nonzero(ridge_mask), 1, 'only center ridge');
+      });
+
+      test('filled square produces a sparse ridge mask', function test_filled_square() {
+        const stencil = new Uint8Array([
+          0, 0, 0, 0, 0,
+          0, 1, 1, 1, 0,
+          0, 1, 1, 1, 0,
+          0, 1, 1, 1, 0,
+          0, 0, 0, 0, 0
+        ]);
+        const ridge_mask = ridge.compute_ridge_mask(stencil, 5, 5, { seed: 0 });
+        const ridge_count = count_nonzero(ridge_mask);
+        assert_true(ridge_count > 0, 'ridge has pixels');
+        assert_true(ridge_count < 9, 'ridge is thinner than foreground square');
+      });
+
+      test('pruned medial ridge removes low-radius rectangle corner branches', function test_pruned_medial_rectangle() {
+        const stencil = new Uint8Array([
+          0, 0, 0, 0, 0, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 0, 0, 0, 0, 0
+        ]);
+        const ridge_data = ridge.compute_ridge_data(stencil, 7, 7, { seed: 0 });
+        const expected_pruned_indices = new Set([17, 24, 31]);
+
+        for (let pixel_index = 0; pixel_index < ridge_data.pruned_ridge_binary.length; pixel_index++) {
+          const expected_value = expected_pruned_indices.has(pixel_index) ? 1 : 0;
+          assert_equal(ridge_data.pruned_ridge_binary[pixel_index], expected_value, 'pruned ridge at pixel ' + pixel_index);
+        }
+      });
+
+      test('compute_inner_ridge_mask returns pruned byte mask', function test_inner_ridge_mask_api() {
+        const stencil = new Uint8Array([
+          0, 0, 0, 0, 0, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 1, 1, 1, 0, 0,
+          0, 0, 0, 0, 0, 0, 0
+        ]);
+        const inner_ridge_mask = ridge.compute_inner_ridge_mask(stencil, 7, 7, { seed: 0 });
+        const expected_inner_indices = new Set([17, 24, 31]);
+
+        for (let pixel_index = 0; pixel_index < inner_ridge_mask.length; pixel_index++) {
+          const expected_value = expected_inner_indices.has(pixel_index) ? 255 : 0;
+          assert_equal(inner_ridge_mask[pixel_index], expected_value, 'inner ridge mask at pixel ' + pixel_index);
+        }
+      });
+
+      const summary_element = document.getElementById('summary');
+      const output_element = document.getElementById('test_output');
+      summary_element.textContent = passed_count + ' passed, ' + failed_count + ' failed';
+      summary_element.className = failed_count === 0 ? 'summary test_pass' : 'summary test_fail';
+      output_element.textContent = test_output_lines.join('\n');
+    })();
+  </script>
+</body>
+</html>

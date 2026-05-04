@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Medial Ridge Visualizer</title>
+  <style>
+    body {
+      margin: 18px;
+      font-family: system-ui, sans-serif;
+      color: #202124;
+      background: #f8faf9;
+    }
+
+    h1 {
+      margin: 0 0 10px;
+      font-size: 22px;
+    }
+
+    #status {
+      margin: 0 0 16px;
+      color: #4d5851;
+    }
+
+    #stats {
+      margin: 0 0 16px;
+      padding: 10px 12px;
+      border: 1px solid #d8dfda;
+      background: #ffffff;
+      white-space: pre-wrap;
+    }
+
+    #output_grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+    }
+
+    figure {
+      margin: 0;
+      padding: 10px;
+      border: 1px solid #d8dfda;
+      background: #ffffff;
+    }
+
+    figcaption {
+      margin-bottom: 8px;
+      font-weight: 650;
+    }
+
+    canvas {
+      width: 256px;
+      height: 256px;
+      image-rendering: pixelated;
+      background: #101412;
+      border: 1px solid #cbd5cf;
+      cursor: zoom-in;
+    }
+  </style>
+</head>
+<body>
+  <h1>Medial Ridge Visualizer</h1>
+  <div id="status"></div>
+  <pre id="stats"></pre>
+  <div id="output_grid"></div>
+
+  <script src="medial_ridge.js"></script>
+  <script>
+    (async function run_visualizer() {
+      'use strict';
+
+      const status_element = document.getElementById('status');
+      const stats_element = document.getElementById('stats');
+      const output_grid = document.getElementById('output_grid');
+      const ridge = window.medial_ridge;
+
+      try {
+        const file_path = get_file_parameter();
+        const image_url = new URL('../' + file_path, window.location.href);
+        status_element.textContent = 'Loading ' + file_path;
+
+        const image = await load_image(image_url.href);
+        const source_canvas = draw_source_image(image);
+        const source_image_data = source_canvas
+          .getContext('2d')
+          .getImageData(0, 0, source_canvas.width, source_canvas.height);
+        const stencil = build_stencil_from_red_channel(source_image_data);
+
+        const ridge_data = ridge.compute_ridge_data(stencil, source_canvas.width, source_canvas.height, {
+          seed: 0
+        });
+
+        render_outputs(source_canvas, ridge_data, source_canvas.width, source_canvas.height);
+        status_element.textContent = 'Loaded ' + file_path;
+      } catch (error) {
+        status_element.textContent = error.message;
+        stats_element.textContent = '';
+      }
+
+      function get_file_parameter() {
+        const parameters = new URLSearchParams(window.location.search);
+        const raw_file_path = parameters.get('file');
+
+        if (!raw_file_path) {
+          throw new Error('Add ?file=path/to/stencil.png relative to Work_Permit_Olympus_Mons');
+        }
+
+        const file_path = raw_file_path.replace(/^\/+/, '');
+        if (file_path.includes('..')) {
+          throw new Error('The file parameter must stay inside Work_Permit_Olympus_Mons');
+        }
+
+        return file_path;
+      }
+
+      function load_image(image_url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image();
+          image.onload = () => resolve(image);
+          image.onerror = () => reject(new Error('Could not load image: ' + image_url));
+          image.src = image_url;
+        });
+      }
+
+      function draw_source_image(image) {
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        return canvas;
+      }
+
+      function build_stencil_from_red_channel(image_data) {
+        const total_pixels = image_data.width * image_data.height;
+        const stencil = new Uint8Array(total_pixels);
+
+        for (let pixel_index = 0; pixel_index < total_pixels; pixel_index++) {
+          stencil[pixel_index] = image_data.data[pixel_index * 4] ? 255 : 0;
+        }
+
+        return stencil;
+      }
+
+      function render_outputs(source_canvas, ridge_data, width, height) {
+        const foreground_count = count_nonzero(ridge_data.foreground);
+        const ridge_count = count_nonzero(ridge_data.ridge_binary);
+        const pruned_ridge_count = count_nonzero(ridge_data.pruned_ridge_binary);
+        const removed_ridge_count = count_nonzero(ridge_data.removed_ridge_binary);
+        const max_distance = find_max_sqrt_distance(ridge_data.distance_squared);
+
+        stats_element.textContent = [
+          'size: ' + width + ' x ' + height,
+          'foreground pixels: ' + foreground_count,
+          'medial ridge pixels: ' + ridge_count,
+          'pruned medial ridge pixels: ' + pruned_ridge_count,
+          'removed ridge pixels: ' + removed_ridge_count,
+          'pruning rounds: ' + ridge_data.pruning_iteration_count,
+          'max distance: ' + max_distance.toFixed(3),
+          'stencil source: red channel > 0'
+        ].join('\n');
+
+        output_grid.textContent = '';
+        append_canvas('Source image', source_canvas);
+        append_canvas('Foreground', render_binary_canvas(ridge_data.foreground, width, height, 255));
+        append_canvas('Distance heat', render_distance_heat_canvas(ridge_data.distance_squared, ridge_data.foreground, width, height));
+        append_canvas('Cornerness', render_cornerness_canvas(ridge_data.cornerness, width, height));
+        append_canvas('Processing order', render_order_canvas(ridge_data.order, width, height));
+        append_canvas('Medial ridge binary', render_binary_canvas(ridge_data.ridge_binary, width, height, 255));
+        append_canvas('Medial ridge radius', render_ridge_radius_canvas(ridge_data.ridge_binary, ridge_data.distance_squared, width, height));
+        append_canvas('Pruning comparison', render_pruning_comparison_canvas(ridge_data, width, height));
+        append_canvas('Pruning rounds', render_pruning_rounds_canvas(ridge_data.pruning_iteration, ridge_data.pruning_iteration_count, width, height));
+        append_canvas('Pruned medial ridge', render_binary_canvas(ridge_data.pruned_ridge_binary, width, height, 255));
+      }
+
+      function append_canvas(title, canvas) {
+        const figure = document.createElement('figure');
+        const caption = document.createElement('figcaption');
+        caption.textContent = title;
+        canvas.title = 'Open ' + title + ' in a new tab';
+        canvas.addEventListener('click', () => {
+          const image_url = canvas.toDataURL('image/png');
+          window.open(image_url, '_blank', 'noopener');
+        });
+        figure.appendChild(caption);
+        figure.appendChild(canvas);
+        output_grid.appendChild(figure);
+      }
+
+      function render_binary_canvas(array_value, width, height, scale_value) {
+        return render_array_canvas(array_value, width, height, value => value ? scale_value : 0);
+      }
+
+      function render_cornerness_canvas(cornerness, width, height) {
+        return render_array_canvas(cornerness, width, height, value => Math.round((value / 8) * 255));
+      }
+
+      function render_order_canvas(order, width, height) {
+        const order_values = new Float64Array(width * height);
+        const denominator = Math.max(1, order.length - 1);
+
+        for (let order_index = 0; order_index < order.length; order_index++) {
+          const pixel_index = order[order_index];
+          order_values[pixel_index] = Math.round((order_index / denominator) * 255);
+        }
+
+        return render_array_canvas(order_values, width, height, value => value);
+      }
+
+      function render_distance_heat_canvas(distance_squared, foreground, width, height) {
+        const max_distance = find_max_sqrt_distance(distance_squared);
+        return render_color_canvas(width, height, pixel_index => {
+          if (!foreground[pixel_index] || max_distance === 0) return [0, 0, 0];
+          const normalized_value = Math.sqrt(distance_squared[pixel_index]) / max_distance;
+          return heat_color(normalized_value);
+        });
+      }
+
+      function render_ridge_radius_canvas(ridge_binary, distance_squared, width, height) {
+        const max_distance = find_max_sqrt_distance(distance_squared);
+        return render_color_canvas(width, height, pixel_index => {
+          if (!ridge_binary[pixel_index] || max_distance === 0) return [0, 0, 0];
+          const normalized_value = Math.sqrt(distance_squared[pixel_index]) / max_distance;
+          return heat_color(normalized_value);
+        });
+      }
+
+      function render_pruning_comparison_canvas(ridge_data, width, height) {
+        return render_color_canvas(width, height, pixel_index => {
+          if (ridge_data.pruned_ridge_binary[pixel_index]) return [40, 210, 110];
+          if (ridge_data.removed_ridge_binary[pixel_index]) return [235, 70, 55];
+          if (ridge_data.ridge_binary[pixel_index]) return [180, 180, 180];
+          return [0, 0, 0];
+        });
+      }
+
+      function render_pruning_rounds_canvas(pruning_iteration, pruning_iteration_count, width, height) {
+        return render_color_canvas(width, height, pixel_index => {
+          const iteration = pruning_iteration[pixel_index];
+          if (iteration === 0 || pruning_iteration_count === 0) return [0, 0, 0];
+          const normalized_value = iteration / pruning_iteration_count;
+          return heat_color(normalized_value);
+        });
+      }
+
+      function render_color_canvas(width, height, map_pixel_to_color) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        const image_data = context.createImageData(width, height);
+
+        for (let pixel_index = 0; pixel_index < width * height; pixel_index++) {
+          const color = map_pixel_to_color(pixel_index);
+          const data_index = pixel_index * 4;
+          image_data.data[data_index] = clamp_byte(color[0]);
+          image_data.data[data_index + 1] = clamp_byte(color[1]);
+          image_data.data[data_index + 2] = clamp_byte(color[2]);
+          image_data.data[data_index + 3] = 255;
+        }
+
+        context.putImageData(image_data, 0, 0);
+        return canvas;
+      }
+
+      function heat_color(normalized_value) {
+        const value = Math.max(0, Math.min(1, normalized_value));
+
+        if (value < 0.25) {
+          const local_value = value / 0.25;
+          return [0, Math.round(local_value * 120), 255];
+        }
+
+        if (value < 0.5) {
+          const local_value = (value - 0.25) / 0.25;
+          return [0, 120 + Math.round(local_value * 135), 255 - Math.round(local_value * 255)];
+        }
+
+        if (value < 0.75) {
+          const local_value = (value - 0.5) / 0.25;
+          return [Math.round(local_value * 255), 255, 0];
+        }
+
+        const local_value = (value - 0.75) / 0.25;
+        return [255, 255 - Math.round(local_value * 255), 0];
+      }
+
+      function render_array_canvas(array_value, width, height, map_value_to_gray) {
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext('2d');
+        const image_data = context.createImageData(width, height);
+
+        for (let pixel_index = 0; pixel_index < array_value.length; pixel_index++) {
+          const gray_value = clamp_byte(map_value_to_gray(array_value[pixel_index], pixel_index));
+          const data_index = pixel_index * 4;
+          image_data.data[data_index] = gray_value;
+          image_data.data[data_index + 1] = gray_value;
+          image_data.data[data_index + 2] = gray_value;
+          image_data.data[data_index + 3] = 255;
+        }
+
+        context.putImageData(image_data, 0, 0);
+        return canvas;
+      }
+
+      function count_nonzero(array_value) {
+        let nonzero_count = 0;
+
+        for (let item_index = 0; item_index < array_value.length; item_index++) {
+          if (array_value[item_index]) nonzero_count++;
+        }
+
+        return nonzero_count;
+      }
+
+      function find_max_sqrt_distance(distance_squared) {
+        let max_distance = 0;
+
+        for (let item_index = 0; item_index < distance_squared.length; item_index++) {
+          const distance = Math.sqrt(distance_squared[item_index]);
+          if (distance > max_distance) max_distance = distance;
+        }
+
+        return max_distance;
+      }
+
+      function clamp_byte(value) {
+        if (!Number.isFinite(value)) return 0;
+        return Math.max(0, Math.min(255, Math.round(value)));
+      }
+    })();
+  </script>
+</body>
+</html>
