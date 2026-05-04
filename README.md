@@ -3,12 +3,15 @@
 <a href="Example_Stencil.png">
   <img src="Example_Stencil.png" alt="Example Stencil" width="230">
 </a>
+&nbsp;&nbsp;&nbsp;
 ⇒
+&nbsp;&nbsp;&nbsp;
 <a href="Example_Ridges.png">
   <img src="Example_Ridges.png" alt="Example Ridges" width="230">
 </a>
 
-Detect central inner ridges (medial structures) of arbitrary 2D shapes.
+
+**Detect central inner ridges (medial structures) of arbitrary 2D shapes.**
 
 This repository is centered on a JavaScript re-implementation of scikit-image's `medial_axis` method, extended with additional project logic that removes low-radius corner branches.
 
