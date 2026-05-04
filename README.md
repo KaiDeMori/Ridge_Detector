@@ -1,5 +1,7 @@
 # Ridge Detector
 
+![Example Stencil](Example_Stencil.png) -> ![Example Ridges](Example_Ridges.png)
+
 Detect central inner ridges (medial structures) of arbitrary 2D shapes.
 
 This repository is centered on a JavaScript re-implementation of scikit-image's `medial_axis` method, extended with additional project logic that removes low-radius corner branches.
