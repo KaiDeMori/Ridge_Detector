@@ -1,40 +1,41 @@
-# Medial Axis Finding Prompt Pack
+# Ridge Detector — scikit-image Port
 
-This folder contains a staged prompt workflow for producing a correct, transferable description of `skimage.morphology.medial_axis` for a JavaScript/browser implementation. The current project implementation uses that raw medial ridge as an intermediate and then applies low-radius endpoint pruning to produce the final inner ridge mask.
+This folder holds the **faithful port**: a JavaScript re-creation of `skimage.morphology.medial_axis`, plus the staged research workflow that produced it. The port uses the raw medial ridge as an intermediate and then applies low-radius endpoint pruning to produce the final inner ridge mask.
 
-The workflow is designed around small isolated tasks. Each prompt produces one partial result, and later prompts use those results as their source material.
+This is the place to contribute fixes that keep the implementation true to the source algorithms. For the tuned, battle-tested detector that goes beyond the port (and handles spiky shapes the port cannot), see [`../enhanced/`](../enhanced/).
 
-## Execution Order
+## Layout
 
-- `prompts/01_source_fact_extractor.prompt.md`
-- `prompts/02_test_oracle_designer.prompt.md`
-- `prompts/03_implementation_semantics_translator.prompt.md`
-- `prompts/04_EDT_strategy_decider.prompt.md`
-- `prompts/05_final_spec_writer.prompt.md`
-- `prompts/06_adversarial_spec_reviewer.prompt.md`
+- `medial_ridge_detector_skimage_port.js` — the port implementation (the entry file).
+- `research/` — the staged prompt workflow and its outputs.
+- `tests/` — browser-based source-contract tests and a step-by-step visualizer. Open the HTML files in a browser; no build step or package install is required.
 
-## Shared Files
+## Research Workflow
 
-- `shared/medial_axis_orientation.md` gives every agent the same source-priority guidance and implementation details to keep visible.
-- `shared/result_contract.md` defines the artifact each step should produce.
+The `research/` folder is designed around small isolated tasks. Each prompt produces one partial result, and later prompts use those results as their source material.
 
-## Result Folders
+### Execution Order
 
-- `results/01_source_facts/`
-- `results/02_behavior_oracles/`
-- `results/03_implementation_semantics/`
-- `results/04_EDT_strategy/`
-- `results/05_final_spec/`
-- `results/06_review/`
+- `research/prompts/01_source_fact_extractor.prompt.md`
+- `research/prompts/02_test_oracle_designer.prompt.md`
+- `research/prompts/03_implementation_semantics_translator.prompt.md`
+- `research/prompts/04_EDT_strategy_decider.prompt.md`
+- `research/prompts/05_final_spec_writer.prompt.md`
+- `research/prompts/06_adversarial_spec_reviewer.prompt.md`
 
-## Reference Implementation
+### Shared Files
 
-- `implementation/medial_ridge.js` contains the plain JavaScript reference implementation snapshot.
-- `testing/medial_ridge_tests.html` contains browser-based source-contract tests.
+- `research/shared/medial_axis_orientation.md` gives every agent the same source-priority guidance and implementation details to keep visible.
+- `research/shared/result_contract.md` defines the artifact each step should produce.
 
-The active browser test files currently live under `Work_Permit_Olympus_Mons/Ridge_Test/`.
+### Result Folders
 
-Open the test HTML file in a browser to run the checks. No build step or package install is required.
+- `research/results/01_source_facts/`
+- `research/results/02_behavior_oracles/`
+- `research/results/03_implementation_semantics/`
+- `research/results/04_EDT_strategy/`
+- `research/results/05_final_spec/`
+- `research/results/06_review/`
 
 ## Working Principle
 

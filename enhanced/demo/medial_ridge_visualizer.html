@@ -126,7 +126,7 @@
     <pre id="stats"></pre>
     <div id="output_grid"></div>
 
-    <script src="medial_ridge.js"></script>
+    <script src="../medial_ridge_detector_enhanced.js"></script>
     <script>
       (async function run_visualizer() {
         "use strict";
@@ -158,7 +158,7 @@
 
           if (file_path) {
             status_element.textContent = "Loading " + file_path;
-            const image_url = new URL("../" + file_path, window.location.href);
+            const image_url = new URL("../../" + file_path, window.location.href);
             const image = await load_image(image_url.href);
             const canvas = draw_source_image(image);
             const imgData = canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height);

@@ -64,7 +64,7 @@
   <pre id="stats"></pre>
   <div id="output_grid"></div>
 
-  <script src="medial_ridge.js"></script>
+  <script src="../medial_ridge_detector_skimage_port.js"></script>
   <script>
     (async function run_visualizer() {
       'use strict';
@@ -76,7 +76,7 @@
 
       try {
         const file_path = get_file_parameter();
-        const image_url = new URL('../' + file_path, window.location.href);
+        const image_url = new URL('../../' + file_path, window.location.href);
         status_element.textContent = 'Loading ' + file_path;
 
         const image = await load_image(image_url.href);
@@ -102,12 +102,12 @@
         const raw_file_path = parameters.get('file');
 
         if (!raw_file_path) {
-          throw new Error('Add ?file=path/to/stencil.png relative to Work_Permit_Olympus_Mons');
+          throw new Error('Add ?file=path/to/stencil.png relative to the repository root');
         }
 
         const file_path = raw_file_path.replace(/^\/+/, '');
         if (file_path.includes('..')) {
-          throw new Error('The file parameter must stay inside Work_Permit_Olympus_Mons');
+          throw new Error('The file parameter must stay inside the repository root');
         }
 
         return file_path;
