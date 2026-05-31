@@ -6,6 +6,11 @@
 
   const DEFAULT_RIDGE_SEED = 42;
 
+  // Every possible 3x3 binary neighborhood: 9 cells, each 0 or 1, packed into a 9-bit
+  // index. 2^9 = 512 patterns, one keep_lut slot each. Tied to the 3x3 window the
+  // thinning is built on — not a tunable value.
+  const NEIGHBORHOOD_PATTERN_COUNT = 1 << 9;
+
   const MEDIAL_RIDGE_DEFAULT_CONFIG = {
     // Seed for the tie-break shuffle; only consulted when deterministic === false.
     seed: DEFAULT_RIDGE_SEED,
@@ -139,9 +144,9 @@
   //     so removing it would erode the line rather than thin it.
   // Doing this as a table means thinning is just an O(1) lookup per pixel.
   function build_keep_lut_with_connectivity(connectivity) {
-    const keep_lut = new Uint8Array(512);
+    const keep_lut = new Uint8Array(NEIGHBORHOOD_PATTERN_COUNT);
 
-    for (let neighborhood_index = 0; neighborhood_index < 512; neighborhood_index++) {
+    for (let neighborhood_index = 0; neighborhood_index < NEIGHBORHOOD_PATTERN_COUNT; neighborhood_index++) {
       const center_is_foreground = (neighborhood_index & 16) !== 0;
       if (!center_is_foreground) continue;
 
