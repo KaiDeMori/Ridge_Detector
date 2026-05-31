@@ -1,18 +1,37 @@
+// Enhanced inner-ridge detector. A re-interpretation of scikit-image's medial_axis
+// that adds corner smoothing and parallel checkerboard thinning so it stays stable
+// on spiky / sharp-cornered shapes. High-level overview: docs/enhanced_approach.md.
 (function expose_medial_ridge(global_scope) {
   "use strict";
 
   const DEFAULT_RIDGE_SEED = 42;
 
   const MEDIAL_RIDGE_DEFAULT_CONFIG = {
+    // Seed for the tie-break shuffle; only consulted when deterministic === false.
     seed: DEFAULT_RIDGE_SEED,
+    // Thinning strategy. "parallel_checkerboard" is the stable default; any other
+    // value falls back to the sequential, order-dependent thinning.
     thinning_mode: "parallel_checkerboard",
+    // When true, pixels are processed in a fixed order (no randomness). This trades
+    // away symmetry-breaking for fully reproducible output.
     deterministic: true,
+    // Corner smoothing, applied to the mask *before* thinning to stop sharp corners
+    // from spawning spurious ridge branches. These two are independent passes:
+    //   smooth_open  -> morphological opening: shaves convex (outer) spikes/corners.
+    //   smooth_close -> morphological closing: fills concave (inner) notches.
     smooth_open: true,
     smooth_close: true,
+    // How the smoothing radius is chosen:
+    //   auto_radius true  -> derive it from the shape's own corner curvature.
+    //   auto_radius false -> use the fixed smoothing_radius below.
     auto_radius: true,
     smoothing_radius: 4,
   };
 
+  // The single entry point. Runs the whole pipeline and returns every intermediate
+  // (so the visualizer can show each step) alongside the two results that matter:
+  // ridge_binary (raw medial ridge) and pruned_ridge_binary (final inner ridge).
+  // Stages: binarize -> (corner smoothing) -> distance transform -> thinning -> pruning.
   function compute_ridge_data(stencil, width, height, options) {
     validate_stencil_input(stencil, width, height);
 
@@ -48,10 +67,15 @@
       exposed_auto_sigma = auto_sigma;
       exposed_auto_q = auto_q;
     }
+    // keep_lut: 512-entry lookup keyed by the 3x3 neighborhood; decides whether a
+    // pixel may be deleted during thinning without breaking the line's topology.
     const keep_lut = build_keep_lut_with_connectivity(8);
+    // distance_squared drives both the thinning order (boundary inward) and pruning.
     const distance_squared = compute_distance_to_background_squared(foreground, width, height);
     const cornerness = compute_cornerness(foreground, width, height);
     const order = build_processing_order(foreground, distance_squared, cornerness, options.seed, options.deterministic);
+    // Default path is checkerboard thinning; the `order` array only feeds the
+    // sequential fallback. Both erode the mask down to a 1px ridge using keep_lut.
     const ridge_binary = options.thinning_mode === "parallel_checkerboard" ? compute_ridge_binary_parallel_checkerboard(foreground, width, height, distance_squared, keep_lut) : compute_ridge_binary(foreground, width, height, order, keep_lut);
 
     const pruning_data = compute_low_radius_pruning_data(ridge_binary, distance_squared, width, height);
@@ -106,6 +130,14 @@
     return foreground;
   }
 
+  // Precompute, for every possible 3x3 neighborhood (9 bits, center = bit 4), whether
+  // the center pixel must be kept during thinning. A pixel is kept when deleting it
+  // would change the topology and so cannot be safely thinned away:
+  //   - it is a connection point: removing it splits the local component
+  //     (component count changes when the center is cleared), or
+  //   - it is an endpoint / thin enough already (fewer than 3 foreground pixels),
+  //     so removing it would erode the line rather than thin it.
+  // Doing this as a table means thinning is just an O(1) lookup per pixel.
   function build_keep_lut_with_connectivity(connectivity) {
     const keep_lut = new Uint8Array(512);
 
@@ -231,6 +263,9 @@
     return out;
   }
 
+  // Morphology via distance transform: a pixel is "within radius" of the mask iff its
+  // distance to the mask is <= radius. This gives a true circular (Euclidean) structuring
+  // element for free, instead of the boxy result of repeated 3x3 passes.
   function dilate_mask(mask, width, height, radius) {
     if (radius <= 0) return new Uint8Array(mask);
     const inv = invert_binary_mask(mask);
@@ -251,12 +286,16 @@
     return out;
   }
 
+  // Opening (erode then dilate): removes foreground detail thinner than `radius`,
+  // i.e. shaves off sharp convex spikes/corners while leaving the bulk shape intact.
   function morphological_close_inner_and_outer_corners(mask, width, height, radius) {
     const eroded = erode_mask(mask, width, height, radius);
     const opened = dilate_mask(eroded, width, height, radius);
     return opened;
   }
 
+  // Closing (dilate then erode): fills background detail thinner than `radius`,
+  // i.e. rounds out concave notches and bridges hairline gaps.
   function morphological_closing(mask, width, height, radius) {
     const dilated = dilate_mask(mask, width, height, radius);
     const closed = erode_mask(dilated, width, height, radius);
@@ -290,6 +329,15 @@
     return { kernel: k, radius };
   }
 
+  // Auto-pick a single smoothing radius from the shape's own geometry, so smoothing
+  // scales with the shape instead of using a hard-coded pixel count. Strategy:
+  //   1. Estimate the shape's scale R_med (median local thickness, from the EDT).
+  //   2. Build a smoothed signed distance field and measure boundary curvature
+  //      (divergence of the normal) at a scale tied to R_med.
+  //   3. Take a high quantile of the sharpest outward curvature -> the radius of the
+  //      tightest corners we want to round, clamped to a sane range.
+  // The math is dense; the contract is simply: mask in, a good integer radius out.
+  // `curvature_hat`, `sigma`, `q` are returned only for visualization/debugging.
   function pick_global_corner_radius(mask, width, height) {
     // Estimate scale R_med
     const d2_bg = compute_distance_to_background_squared(mask, width, height);
@@ -430,6 +478,11 @@
     return arr[idx];
   }
 
+  // 1D exact squared distance transform (Felzenszwalb & Huttenlocher): computes the
+  // lower envelope of parabolas seeded at each sample. Running it over rows then
+  // columns yields an exact 2D Euclidean distance transform. The envelope/intersection
+  // bookkeeping below is the standard form of that algorithm; left uncommented because
+  // it only makes sense against the paper.
   function edt_1d(samples, sample_count) {
     const distances = new Float64Array(sample_count);
     const locations = new Int32Array(sample_count);
@@ -526,6 +579,8 @@
     return distance_squared;
   }
 
+  // Per-pixel count of background cells in the 3x3 neighborhood (0 = interior,
+  // higher = closer to a corner/edge). Used only as a tie-breaker in the thinning order.
   function compute_cornerness(foreground, width, height) {
     const cornerness = new Uint8Array(width * height);
 
@@ -554,6 +609,9 @@
     return cornerness;
   }
 
+  // Order foreground pixels for the sequential thinning fallback: smallest distance
+  // first (peel from the boundary inward), then cornerness, then a stable/seeded
+  // tie-break. The checkerboard thinner doesn't use this; it sorts by distance itself.
   function build_processing_order(foreground, distance_squared, cornerness, seed = DEFAULT_RIDGE_SEED, deterministic = false) {
     const foreground_indices = [];
 
@@ -599,6 +657,11 @@
     return order;
   }
 
+  // Default thinning. The key idea that makes it stable: process pixels in two passes
+  // by checkerboard parity. Two pixels of the same parity are never 4-adjacent, so no
+  // two neighbors are tested against the same (stale) state and deleted together —
+  // which is exactly what would break a one-pixel line under naive parallel deletion.
+  // Working outward by distance level keeps the result centered on the medial axis.
   function compute_ridge_binary_parallel_checkerboard(foreground, width, height, distance_squared, keep_lut) {
     const result = new Uint8Array(foreground);
 
@@ -720,6 +783,9 @@
     return permutation;
   }
 
+  // Sequential thinning fallback (used when thinning_mode !== "parallel_checkerboard").
+  // Visits pixels in `order` and deletes each one in place via the keep_lut. Simpler,
+  // but the outcome depends on visit order, which is why checkerboard is the default.
   function compute_ridge_binary(foreground, width, height, order, keep_lut) {
     const result = new Uint8Array(foreground);
 
@@ -752,13 +818,17 @@
     return result;
   }
 
+  // Final cleanup. Thinning can leave short "whisker" branches reaching out toward
+  // corners; they show up as endpoints whose distance-to-background (radius) is smaller
+  // than the neighbor they hang off of. We iteratively peel back any such endpoint until
+  // none remain, leaving only the central spine. `removed_*` / `pruning_iteration` are
+  // recorded purely so the visualizer can show what got pruned and when.
   function compute_low_radius_pruning_data(ridge_binary, distance_squared, width, height) {
     const pruned_ridge_binary = new Uint8Array(ridge_binary);
     const removed_ridge_binary = new Uint8Array(ridge_binary.length);
     const pruning_iteration = new Uint16Array(ridge_binary.length);
     let removed_any_pixel = true;
     let pruning_iteration_count = 0;
-    // Simplified pruning: remove endpoints that are not locally maximal in radius.
 
     while (removed_any_pixel) {
       removed_any_pixel = false;
